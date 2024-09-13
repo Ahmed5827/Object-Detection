@@ -4,9 +4,12 @@ import math
 import pyttsx3
 import time
 import threading
+import os
 
 # Initialize the TTS engine
 engine = pyttsx3.init()
+engine_running = False  # Flag to indicate if the engine is running
+terminate_event = threading.Event()  # Event to signal threads to stop
 
 def set_english_voice(engine):
     voices = engine.getProperty('voices')
@@ -21,12 +24,16 @@ if not set_english_voice(engine):
 
 # Function to speak a message
 def speak(message):
+    global engine_running
+    engine_running = True
     engine.say(message)
     engine.runAndWait()
+    engine_running = False
 
 # Function to handle speech in a separate thread
 def async_speak(message):
-    threading.Thread(target=speak, args=(message,)).start()
+    if not terminate_event.is_set() and not engine_running:
+        threading.Thread(target=speak, args=(message,), daemon=True).start()
 
 # Start webcam
 cap = cv2.VideoCapture(0)
@@ -34,7 +41,14 @@ cap.set(3, 1640)
 cap.set(4, 1480)
 
 # Load model
-model = YOLO("yolo-Weights/yolov8n.pt")
+model_path = "yolo-Weights/yolov8n.pt"
+if not os.path.exists(model_path):
+    print(f"Model file not found: {model_path}")
+    cap.release()
+    cv2.destroyAllWindows()
+    exit()
+
+model = YOLO(model_path)
 
 # Object classes
 classNames = ["person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train", "truck", "boat",
@@ -51,61 +65,70 @@ classNames = ["person", "bicycle", "car", "motorbike", "aeroplane", "bus", "trai
 last_speak_time = time.time()
 speak_interval = 3  # seconds
 
-while True:
-    success, img = cap.read()
-    results = model(img, stream=True)
+try:
+    while not terminate_event.is_set():
+        success, img = cap.read()
+        if not success:
+            print("Failed to capture image from webcam.")
+            break
 
-    # Object count dictionary
-    object_count = {}
+        results = model(img, stream=True)
 
-    # Coordinates
-    for r in results:
-        boxes = r.boxes
+        # Object count dictionary
+        object_count = {}
 
-        for box in boxes:
-            # Bounding box
-            x1, y1, x2, y2 = box.xyxy[0]
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)  # Convert to int values
+        # Coordinates
+        for r in results:
+            boxes = r.boxes
 
-            # Put box in cam
-            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 255), 3)
+            for box in boxes:
+                # Bounding box
+                x1, y1, x2, y2 = box.xyxy[0]
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)  # Convert to int values
 
-            # Confidence
-            confidence = math.ceil((box.conf[0] * 100)) / 100
-            print("Confidence --->", confidence)
+                # Put box in cam
+                cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 255), 3)
 
-            # Class name
-            cls = int(box.cls[0])
-            class_name = classNames[cls]
+                # Confidence
+                confidence = math.ceil((box.conf[0] * 100)) / 100
+                print("Confidence --->", confidence)
 
-            # Update object count
-            if class_name in object_count:
-                object_count[class_name] += 1
-            else:
-                object_count[class_name] = 1
+                # Class name
+                cls = int(box.cls[0])
+                class_name = classNames[cls]
 
-            # Object details
-            org = [x1, y1]
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            fontScale = 1
-            color = (255, 0, 0)
-            thickness = 2
+                # Update object count
+                if class_name in object_count:
+                    object_count[class_name] += 1
+                else:
+                    object_count[class_name] = 1
 
-            cv2.putText(img, class_name, org, font, fontScale, color, thickness)
+                # Object details
+                org = [x1, y1]
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                fontScale = 1
+                color = (255, 0, 0)
+                thickness = 2
 
-    # Announce detected objects and their counts every 3 seconds
-    current_time = time.time()
-    if current_time - last_speak_time >= speak_interval:
-        if object_count:
-            message = "I see: " + ", ".join(f"{count} {obj}" for obj, count in object_count.items())
-            async_speak(message)
-        last_speak_time = current_time
+                cv2.putText(img, class_name, org, font, fontScale, color, thickness)
 
-    cv2.imshow('Webcam', img)
-    
-    # Check if the window was closed
-    if cv2.waitKey(1) == ord('q'):
-        break
+        # Announce detected objects and their counts every 3 seconds
+        current_time = time.time()
+        if current_time - last_speak_time >= speak_interval:
+            if object_count:
+                message = "I see: " + ", ".join(f"{count} {obj}" for obj, count in object_count.items())
+                async_speak(message)
+            last_speak_time = current_time
 
-cap.release()
-cv2.destroyAllWindows()
+        cv2.imshow('Webcam', img)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            terminate_event.set()
+
+except Exception as e:
+    print(f"An error occurred: {e}")
+
+finally:
+    # Clean up
+    cap.release()
+    cv2.destroyAllWindows()
