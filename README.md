@@ -17,7 +17,7 @@ This Python program uses the YOLOv8 model for real-time object detection with a 
 1. **Clone the Repository:**
 
     ```bash
-    git clone https://github.com/your-username/real-time-object-detection.git
+    git clone https://github.com/Ahmed5827/Object-Detection.git
     cd real-time-object-detection
     ```
 
